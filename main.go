@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"regexp"
@@ -24,38 +25,6 @@ func main() {
 
 	client := slack.New(token, slack.OptionDebug(true), slack.OptionAppLevelToken(appToken))
 	bbClient := bitbucket.NewOAuthClientCredentials(bbKey, bbSecret)
-
-	user, err := bbClient.User.Profile()
-	if err != nil {
-		fmt.Println("Not logged in or token is invalid:", err)
-		return
-	}
-
-	fmt.Printf("Profile %v", user.Nickname)
-
-	repoFileOptions := bitbucket.RepositoryFilesOptions{
-		Owner:    "AleksBL",
-		RepoSlug: "wbot-test",
-		Ref:      "main",
-		Path:     "CHANGELOG.md",
-	}
-
-	fileContent, err := bbClient.Repositories.Repository.GetFileContent(&repoFileOptions)
-	if err != nil {
-		fmt.Printf("Error while getting repo: %s", err)
-	}
-
-  version := ""
-  transformedContent, notFoundText := transformChangelog(fileContent, version)
-  if notFoundText != nil {
-	fmt.Printf("Text transform error: %s", notFoundText)
-  return
-  }
-
-  if transformedContent !=  nil {
-    fmt.Printf("Transformed changelog: %s", string(transformedContent))
-    return
-  }
 
 	socketClient := socketmode.New(
 		client,
@@ -91,7 +60,7 @@ func main() {
 		}
 	}(ctx, client, socketClient, bbClient)
 
-	// socketClient.Run()
+	socketClient.Run()
 }
 
 func handleSlashCommand(command slack.SlashCommand, client *slack.Client, bbClient *bitbucket.Client) (interface{}, error) {
@@ -103,23 +72,59 @@ func handleSlashCommand(command slack.SlashCommand, client *slack.Client, bbClie
 }
 
 func handleReleaseLogCommand(command slack.SlashCommand, client *slack.Client, bbClient *bitbucket.Client) error {
-	attachment := slack.Attachment{}
+  var version string = ""
 
-	attachment.Text = fmt.Sprintf("Repository name: %s", bbClient.Repositories.Repository.Name)
+  if len(command.Text) > 0 {
+	  version = command.Text
+  }
 
-	_, _, err := client.PostMessage(command.ChannelID, slack.MsgOptionAttachments(attachment))
+	user, err := bbClient.User.Profile()
+	if err != nil {
+		fmt.Println("Not logged in or token is invalid:", err)
+	}
+
+	fmt.Printf("Profile %v", user.Nickname)
+
+	repoFileOptions := bitbucket.RepositoryFilesOptions{
+		Owner:    "AleksBL",
+		RepoSlug: "wbot-test",
+		Ref:      "main",
+		Path:     "CHANGELOG.md",
+	}
+
+	fileContent, err := bbClient.Repositories.Repository.GetFileContent(&repoFileOptions)
+	if err != nil {
+		fmt.Printf("Error while getting repo: %s", err)
+	}
+
+	transformedContent, notFoundText := transformChangelog(fileContent, version)
+	if notFoundText != nil {
+		attachment := slack.Attachment{}
+
+		attachment.Text = *notFoundText
+		attachment.Color = "#e53935"
+
+		_, _, err := client.PostMessage(command.ChannelID, slack.MsgOptionAttachments(attachment))
+		if err != nil {
+			return fmt.Errorf("failed to post message: %w", err)
+		}
+
+    return nil
+	}
+
+  err = ioutil.WriteFile("files/CHANGELOG.md", transformedContent, 0644) 
+  if err != nil {
+    return err 
+  }
+
+	params := slack.FileUploadParameters{
+		Channels: []string{os.Getenv("SLACK_CHANNEL_ID")},
+		File:     "files/CHANGELOG.md",
+	}
+	_, err = client.UploadFile(params)
 	if err != nil {
 		return err
 	}
-
-	//  params := slack.FileUploadParameters{
-	//   Channels: []string{os.Getenv("SLACK_CHANNEL_ID")},
-	//   File: "./files/CHANGELOG.md",
-	//  }
-	//  _, err := client.UploadFile(params)
-	//  if err != nil {
-	//    return err
-	//  }
 
 	return nil
 }
@@ -138,30 +143,25 @@ func currentTime() string {
 
 func transformChangelog(content []byte, version string) (transformedContent []byte, notFoundText *string) {
 	var pattern string
-  var matches [][]byte
+	var matches [][]byte
 
 	if version == "" {
 		pattern = `(?s)### Unrelease(.*?)---`
 	} else {
-    fmt.Println(version)
+		fmt.Println(version)
 		pattern = fmt.Sprintf(`(?s)### %s(.*?)---`, version)
-    fmt.Println(pattern)
-  }
+		fmt.Println(pattern)
+	}
 
-  re := regexp.MustCompile(pattern)
-  matches = re.FindAll(content, -1)
-  if len(matches) > 1 {
-    notFoundText := "Used version not found"
+	re := regexp.MustCompile(pattern)
+	matches = re.FindAll(content, -1)
+	if len(matches) < 1 {
+		notFoundText := "Used version not found"
 
-    return nil, &notFoundText 
-  }
+		return nil, &notFoundText
+	}
 
-  cuttedContent := matches[0]
+	cuttedContent := matches[0]
 
 	return cuttedContent, nil
-}
-
-func trimLeadingWhitespace(s string) string {
-	re := regexp.MustCompile(`(?m)^\s+`)
-	return re.ReplaceAllString(s, "")
 }
