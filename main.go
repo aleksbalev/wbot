@@ -45,12 +45,17 @@ func main() {
 		fmt.Printf("Error while getting repo: %s", err)
 	}
 
-  transformedContent, notFoundText := transformChangelog(fileContent, nil)
+  version := ""
+  transformedContent, notFoundText := transformChangelog(fileContent, version)
   if notFoundText != nil {
 	fmt.Printf("Text transform error: %s", notFoundText)
+  return
   }
 
-  fmt.Printf("Transformed changelog: %s", transformedContent)
+  if transformedContent !=  nil {
+    fmt.Printf("Transformed changelog: %s", string(transformedContent))
+    return
+  }
 
 	socketClient := socketmode.New(
 		client,
@@ -131,27 +136,29 @@ func currentTime() string {
 	return czechia
 }
 
-func transformChangelog(content []byte, version *string) (transformedContent *string, notFoundText *string) {
-	var startRegex regexp.Regexp
-  var matches []string
+func transformChangelog(content []byte, version string) (transformedContent []byte, notFoundText *string) {
+	var pattern string
+  var matches [][]byte
 
-	if version == nil {
-		startRegex = *regexp.MustCompile(`### Unreleased - [\d-]+(.*?)###`)
+	if version == "" {
+		pattern = `(?s)### Unrelease(.*?)---`
 	} else {
-		startRegex = *regexp.MustCompile(fmt.Sprintf(`(?s)(%s.*?)(### .*?|\z)`, regexp.QuoteMeta(*version)))
-	}
+    fmt.Println(version)
+		pattern = fmt.Sprintf(`(?s)### %s(.*?)---`, version)
+    fmt.Println(pattern)
+  }
 
-  matches = startRegex.FindStringSubmatch(string(content[:]))
+  re := regexp.MustCompile(pattern)
+  matches = re.FindAll(content, -1)
   if len(matches) > 1 {
     notFoundText := "Used version not found"
 
     return nil, &notFoundText 
   }
 
-  fmt.Printf("matches: %s", matches[1])
-  cuttedContent := matches[1]
+  cuttedContent := matches[0]
 
-	return &cuttedContent, nil
+	return cuttedContent, nil
 }
 
 func trimLeadingWhitespace(s string) string {
