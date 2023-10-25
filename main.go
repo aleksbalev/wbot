@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"regexp"
@@ -72,11 +71,11 @@ func handleSlashCommand(command slack.SlashCommand, client *slack.Client, bbClie
 }
 
 func handleReleaseLogCommand(command slack.SlashCommand, client *slack.Client, bbClient *bitbucket.Client) error {
-  var version string = ""
+	var version string = ""
 
-  if len(command.Text) > 0 {
-	  version = command.Text
-  }
+	if len(command.Text) > 0 {
+		version = command.Text
+	}
 
 	user, err := bbClient.User.Profile()
 	if err != nil {
@@ -109,16 +108,16 @@ func handleReleaseLogCommand(command slack.SlashCommand, client *slack.Client, b
 			return fmt.Errorf("failed to post message: %w", err)
 		}
 
-    return nil
+		return nil
 	}
 
-  err = ioutil.WriteFile("files/CHANGELOG.md", transformedContent, 0644) 
-  if err != nil {
-    return err 
-  }
+	err = os.WriteFile("files/CHANGELOG.md", transformedContent, 0644)
+	if err != nil {
+		return err
+	}
 
 	params := slack.FileUploadParameters{
-		Channels: []string{os.Getenv("SLACK_CHANNEL_ID")},
+		Channels: []string{command.ChannelID},
 		File:     "files/CHANGELOG.md",
 	}
 	_, err = client.UploadFile(params)
@@ -146,10 +145,10 @@ func transformChangelog(content []byte, version string) (transformedContent []by
 	var matches [][]byte
 
 	if version == "" {
-		pattern = `(?s)### Unrelease(.*?)---`
+		pattern = `(?s)## Unrelease(.*?)---`
 	} else {
 		fmt.Println(version)
-		pattern = fmt.Sprintf(`(?s)### %s(.*?)---`, version)
+		pattern = fmt.Sprintf(`(?s)## %s(.*?)---`, version)
 		fmt.Println(pattern)
 	}
 
